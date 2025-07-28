@@ -35,11 +35,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install dependencies
+      - name: Set up Python venv and install dependencies
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements_github_action.txt
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements_github_action.txt
 
       - name: Run DLT pipeline
         run: |
-          python3 shopify_dlt_pipeline.py
+          source venv/bin/activate
+          python shopify_dlt_pipeline.py
