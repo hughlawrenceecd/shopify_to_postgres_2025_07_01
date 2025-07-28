@@ -35,6 +35,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Install python3.13-venv (if missing)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3.13-venv
+
       - name: Set up Python venv and install dependencies
         run: |
           python3 -m venv venv
