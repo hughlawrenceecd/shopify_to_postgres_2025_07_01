@@ -7,7 +7,7 @@ on:
 
 jobs:
   sync:
-    runs-on: self-hosted  # Matches your runner's labels
+    runs-on: [self-hosted, do, shopify]  # Matches your runner's labels
     
     steps:
       - uses: actions/checkout@v4
