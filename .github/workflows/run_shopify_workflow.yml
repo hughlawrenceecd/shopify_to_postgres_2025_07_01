@@ -24,10 +24,11 @@ jobs:
           
       - name: Run pipeline
         env:
-          # Use INTERNAL DO database hostname (not public URL)
-          DESTINATION__POSTGRES__CREDENTIALS__HOST: "private-db-hostname.ondigitalocean.com"
+          DESTINATION__POSTGRES__CREDENTIALS__DATABASE: defaultdb
+          DESTINATION__POSTGRES__CREDENTIALS__USERNAME: doadmin
+          DESTINATION__POSTGRES__CREDENTIALS__HOST: ecd-data-warehouse-do-user-23910252-0.h.db.ondigitalocean.com
           DESTINATION__POSTGRES__CREDENTIALS__PORT: "25060"
-          DESTINATION__POSTGRES__CREDENTIALS__DATABASE: "defaultdb"
-          DESTINATION__POSTGRES__CREDENTIALS__USERNAME: "doadmin"
-          DESTINATION__POSTGRES__CREDENTIALS__PASSWORD: "${{ secrets.POSTGRES_PASSWORD }}"
+          DESTINATION__POSTGRES__CREDENTIALS__CONNECT_TIMEOUT: "600"
+          SOURCES__SHOPIFY_DLT__PRIVATE_APP_PASSWORD: ${{ secrets.SOURCES__SHOPIFY_DLT__PRIVATE_APP_PASSWORD }}
+          DESTINATION__POSTGRES__CREDENTIALS__PASSWORD: ${{ secrets.DESTINATION__POSTGRES__CREDENTIALS__PASSWORD }}
         run: python shopify_dlt_pipeline.py
