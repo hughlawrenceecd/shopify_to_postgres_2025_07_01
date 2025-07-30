@@ -1,34 +1,53 @@
-name: Shopify to PostgreSQL Sync
+name: Run shopify pipeline from shopify_dlt_pipeline.py - Update
 
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
+env:
+  DESTINATION__POSTGRES__CREDENTIALS__DATABASE: defaultdb
+  DESTINATION__POSTGRES__CREDENTIALS__USERNAME: doadmin
+  DESTINATION__POSTGRES__CREDENTIALS__HOST: ecd-data-warehouse-do-user-23910252-0.h.db.ondigitalocean.com
+  DESTINATION__POSTGRES__CREDENTIALS__PORT: "25060"
+  DESTINATION__POSTGRES__CREDENTIALS__CONNECT_TIMEOUT: "600"
+  SOURCES__SHOPIFY_DLT__PRIVATE_APP_PASSWORD: ${{ secrets.SOURCES__SHOPIFY_DLT__PRIVATE_APP_PASSWORD }}
+  DESTINATION__POSTGRES__CREDENTIALS__PASSWORD: ${{ secrets.DESTINATION__POSTGRES__CREDENTIALS__PASSWORD }}
+
 jobs:
-  sync:
-    runs-on: [self-hosted, do, shopify]  # Matches your runner's labels
-    
+  maybe_skip:
+    runs-on: self-hosted
+    outputs:
+      should_skip: ${{ steps.skip_check.outputs.should_skip }}
     steps:
-      - uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - id: skip_check
+        uses: fkirc/skip-duplicate-actions@v5
         with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
+          concurrent_skipping: always
+          skip_after_successful_duplicate: "false"
+          do_not_skip: "[]"
+
+  run_pipeline:
+    needs: maybe_skip
+    if: needs.maybe_skip.outputs.should_skip != 'true'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install python3.13-venv (if missing)
         run: |
-          python -m pip install --upgrade pip
+          sudo apt-get update
+          sudo apt-get install -y python3.13-venv
+
+      - name: Set up Python venv and install dependencies
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
           pip install -r requirements_github_action.txt
-          
-      - name: Run pipeline
-        env:
-          DESTINATION__POSTGRES__CREDENTIALS__DATABASE: defaultdb
-          DESTINATION__POSTGRES__CREDENTIALS__USERNAME: doadmin
-          DESTINATION__POSTGRES__CREDENTIALS__HOST: ecd-data-warehouse-do-user-23910252-0.h.db.ondigitalocean.com
-          DESTINATION__POSTGRES__CREDENTIALS__PORT: "25060"
-          DESTINATION__POSTGRES__CREDENTIALS__CONNECT_TIMEOUT: "600"
-          SOURCES__SHOPIFY_DLT__PRIVATE_APP_PASSWORD: ${{ secrets.SOURCES__SHOPIFY_DLT__PRIVATE_APP_PASSWORD }}
-          DESTINATION__POSTGRES__CREDENTIALS__PASSWORD: ${{ secrets.DESTINATION__POSTGRES__CREDENTIALS__PASSWORD }}
-        run: python shopify_dlt_pipeline.py
+
+      - name: Run DLT pipeline
+        run: |
+          source venv/bin/activate
+          python shopify_dlt_pipeline.py
