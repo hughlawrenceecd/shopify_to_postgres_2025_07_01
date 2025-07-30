@@ -16,7 +16,7 @@ env:
 
 jobs:
   maybe_skip:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       should_skip: ${{ steps.skip_check.outputs.should_skip }}
     steps:
@@ -30,7 +30,7 @@ jobs:
   run_pipeline:
     needs: maybe_skip
     if: needs.maybe_skip.outputs.should_skip != 'true'
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
