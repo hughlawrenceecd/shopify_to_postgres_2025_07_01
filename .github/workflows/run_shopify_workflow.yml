@@ -15,21 +15,7 @@ env:
   DESTINATION__POSTGRES__CREDENTIALS__PASSWORD: ${{ secrets.DESTINATION__POSTGRES__CREDENTIALS__PASSWORD }}
 
 jobs:
-  maybe_skip:
-    runs-on: [self-hosted, Linux, X64]
-    outputs:
-      should_skip: ${{ steps.skip_check.outputs.should_skip }}
-    steps:
-      - id: skip_check
-        uses: fkirc/skip-duplicate-actions@v5
-        with:
-          concurrent_skipping: always
-          skip_after_successful_duplicate: "false"
-          do_not_skip: "[]"
-
   run_pipeline:
-    needs: maybe_skip
-    if: needs.maybe_skip.outputs.should_skip != 'true'
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout code
