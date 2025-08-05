@@ -22,6 +22,38 @@ def load_all_resources(resources: List[str], start_date: TAnyDateTime) -> None:
 
 
 def incremental_load_with_backloading() -> None:
+    """Load past orders from Shopify in chunks of 1 week each."""
+
+    pipeline = dlt.pipeline(
+        pipeline_name="shopify", destination='postgres', dataset_name="shopify_data"
+    )
+
+    min_start_date = current_start_date = pendulum.datetime(2024, 1, 1)
+    max_end_date = pendulum.now()
+
+    ranges: List[Tuple[pendulum.DateTime, pendulum.DateTime]] = []
+    while current_start_date < max_end_date:
+        end_date = min(current_start_date.add(weeks=1), max_end_date)
+        ranges.append((current_start_date, end_date))
+        current_start_date = end_date
+
+    with pipeline:  # ✅ KEEP CONNECTION OPEN DURING ALL RUNS
+        for start_date, end_date in ranges:
+            print(f"Load orders between {start_date} and {end_date}")
+            data = shopify_source(
+                start_date=start_date, end_date=end_date, created_at_min=min_start_date
+            ).with_resources("orders")
+
+            load_info = pipeline.run(data)
+            print(load_info)
+
+        # Final incremental run starting from now
+        load_info = pipeline.run(
+            shopify_source(
+                start_date=max_end_date, created_at_min=min_start_date
+            ).with_resources("orders")
+        )
+        print(load_info)
     """Load past orders from Shopify in chunks of 1 week each using the start_date and end_date parameters.
     This can useful to reduce the potiential failure window when loading large amounts of historic data.
     Chunks and incremental load can also be run in parallel to speed up the initial load.
@@ -111,6 +143,6 @@ if __name__ == "__main__":
     resources = ["products", "orders", "customers"]
     load_all_resources(resources, start_date="2025-01-01")
 
-    # incremental_load_with_backloading()
+    incremental_load_with_backloading()
 
     # load_partner_api_transactions()
