@@ -297,4 +297,4 @@ A number of issues kept cropping up when re-trying this installation, some commo
 ./run.sh
 ```
 
-- In the `shopify_dlt_pipeline.py` file, ensure that the `destination` is set to the correct place, whether thats locally (`duckdb`) or the server 
+- In the `shopify_dlt_pipeline.py` file, ensure that the `destination` is set to the correct place, whether thats locally (`duckdb`) or the server (`postgres`)
