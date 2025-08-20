@@ -65,7 +65,7 @@ source .venv/bin/activate
 uv pip install -U dlt
 
 # install dependencies
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 
 ```
 
