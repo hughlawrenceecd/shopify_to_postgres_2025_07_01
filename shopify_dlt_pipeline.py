@@ -75,9 +75,9 @@ def anonymize_customer_data(customer_data: Dict[str, Any], salt: Optional[str] =
     anonymized = customer_data.copy()
     
     for field, action in PII_COLUMN_ACTIONS.items():
-        if field in anonymized:
+        if field in anonymized and anonymized[field] is not None:
             if action == "hash":
-                anonymized[field] = _hash_value(anonymized.get(field), salt)
+                anonymized[field] = _hash_value(str(anonymized[field]), salt)
             elif action == "null":
                 anonymized[field] = None
             elif action == "anon":
@@ -93,9 +93,11 @@ def anonymize_customer_data(customer_data: Dict[str, Any], salt: Optional[str] =
 @dlt.resource(name="customers", write_disposition="merge")
 def customers_with_redaction(start_date: TAnyDateTime, redacted_customers: set) -> Iterator[Dict[str, Any]]:
     """Customer resource that applies redaction to known redacted customers."""
-    customers_resource = shopify_source(start_date=start_date).with_resources("customers")["customers"]
+    # Get the standard customers resource
+    source = shopify_source(start_date=start_date)
+    customers_gen = source.with_resources("customers").resources["customers"]()
     
-    for customer in customers_resource:
+    for customer in customers_gen:
         customer_id = customer.get("id")
         if customer_id and customer_id in redacted_customers:
             yield anonymize_customer_data(customer)
@@ -105,10 +107,20 @@ def customers_with_redaction(start_date: TAnyDateTime, redacted_customers: set) 
 @dlt.resource(name="orders", write_disposition="merge")
 def orders_with_redaction(start_date: TAnyDateTime, redacted_customers: set) -> Iterator[Dict[str, Any]]:
     """Order resource that applies redaction for orders from redacted customers."""
-    orders_resource = shopify_source(start_date=start_date).with_resources("orders")["orders"]
+    # Get the standard orders resource
+    source = shopify_source(start_date=start_date)
+    orders_gen = source.with_resources("orders").resources["orders"]()
     
-    for order in orders_resource:
-        customer_id = order.get("customer", {}).get("id") if isinstance(order.get("customer"), dict) else None
+    for order in orders_gen:
+        customer_id = None
+        customer_data = order.get("customer")
+        
+        if isinstance(customer_data, dict):
+            customer_id = customer_data.get("id")
+        elif customer_data is not None:
+            # Handle case where customer might be a simple value
+            customer_id = customer_data
+        
         if customer_id and customer_id in redacted_customers:
             # Anonymize customer data within the order
             if "customer" in order and isinstance(order["customer"], dict):
@@ -117,14 +129,32 @@ def orders_with_redaction(start_date: TAnyDateTime, redacted_customers: set) -> 
             # Also check for customer data in nested fields
             for key in list(order.keys()):
                 if key.startswith("customer__") and order[key] is not None:
-                    # Create a mock customer dict for anonymization
-                    mock_customer = {key.replace("customer__", "", 1): order[key]}
-                    anonymized = anonymize_customer_data(mock_customer)
-                    order[key] = anonymized.get(key.replace("customer__", "", 1))
+                    # For flat fields, apply individual anonymization
+                    field_name = key.replace("customer__", "", 1)
+                    if field_name in PII_COLUMN_ACTIONS:
+                        action = PII_COLUMN_ACTIONS[field_name]
+                        if action == "hash":
+                            order[key] = _hash_value(str(order[key]))
+                        elif action == "null":
+                            order[key] = None
+                        elif action == "anon":
+                            if field_name == "first_name":
+                                order[key] = ANON_FIRST
+                            elif field_name == "last_name":
+                                order[key] = ANON_LAST
+                            else:
+                                order[key] = "REDACTED"
             
             yield order
         else:
             yield order
+
+@dlt.resource(name="products", write_disposition="merge")
+def products_resource(start_date: TAnyDateTime) -> Iterator[Dict[str, Any]]:
+    """Standard products resource."""
+    source = shopify_source(start_date=start_date)
+    products_gen = source.with_resources("products").resources["products"]()
+    yield from products_gen
 
 def mark_customer_redacted(customer_id: int):
     """Mark a customer as redacted (in production, persist this to a database)."""
@@ -138,19 +168,20 @@ def load_all_resources(resources: List[str], start_date: TAnyDateTime) -> None:
         pipeline_name="shopify", destination='postgres', dataset_name="shopify_data"
     )
     
-    # Create the source with redaction-aware resources
-    source = shopify_source(start_date=start_date)
-    
-    # Replace standard resources with redaction-aware versions if they exist
+    # Create the appropriate resources based on what's requested
     transformed_resources = []
     for resource_name in resources:
         if resource_name == "customers":
             transformed_resources.append(customers_with_redaction(start_date, REDACTED_CUSTOMERS))
         elif resource_name == "orders":
             transformed_resources.append(orders_with_redaction(start_date, REDACTED_CUSTOMERS))
+        elif resource_name == "products":
+            transformed_resources.append(products_resource(start_date))
         else:
-            # For other resources (like products), use the standard version
-            transformed_resources.append(source.with_resources(resource_name)[resource_name])
+            # For other resources, create them dynamically
+            source = shopify_source(start_date=start_date)
+            resource = source.with_resources(resource_name)
+            transformed_resources.append(resource)
     
     load_info = pipeline.run(transformed_resources)
     print(load_info)
@@ -175,16 +206,14 @@ def incremental_load_with_backloading() -> None:
     for start_date, end_date in ranges:
         print(f"Load orders between {start_date} and {end_date}")
         
-        # Use redaction-aware orders resource
-        data = orders_with_redaction(
-            start_date=start_date, 
-            redacted_customers=REDACTED_CUSTOMERS
-        )
+        # Create source with date range
+        source = shopify_source(start_date=start_date, end_date=end_date)
+        orders_resource = source.with_resources("orders")
         
-        load_info = pipeline.run(data)
+        load_info = pipeline.run(orders_resource)
         print(load_info)
 
-    # Final incremental run
+    # Final incremental run with redaction support
     load_info = pipeline.run(
         orders_with_redaction(
             start_date=max_end_date, 
@@ -195,7 +224,6 @@ def incremental_load_with_backloading() -> None:
 
 def load_partner_api_transactions() -> None:
     """Load transactions from the Shopify Partner API."""
-    # (Unchanged from your original code)
     pipeline = dlt.pipeline(
         pipeline_name="shopify_partner",
         destination='postgres',
