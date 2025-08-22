@@ -186,7 +186,7 @@ def load_all_resources(resources: List[str], start_date: TAnyDateTime) -> None:
     """
 
     pipeline = dlt.pipeline(
-        pipeline_name="shopify", destination='duckdb', dataset_name="shopify_data"
+        pipeline_name="shopify", destination='postgres', dataset_name="shopify_data"
     )
     
     # Load data from Shopify
