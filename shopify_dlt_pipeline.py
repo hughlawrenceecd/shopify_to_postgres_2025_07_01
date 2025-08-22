@@ -1,17 +1,12 @@
-"""Pipeline to load Shopify data into DuckDB with GDPR redaction support."""
+"""Pipeline to load Shopify data with GDPR-compliant anonymization."""
 
 import dlt
 from dlt.common import pendulum
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Iterator, Dict, Any
 from shopify_dlt import shopify_source, TAnyDateTime, shopify_partner_query
-import duckdb
 import hashlib
-from pathlib import Path
 
-# Add these constants at the top
-DB_PATH = Path("/Users/hugh.lawrence/Documents/dlt_shopify_test/shopify.duckdb")
-SCHEMA = "shopify_data"
-
+# Constants for anonymization
 PII_COLUMN_ACTIONS = {
     "email": "hash",
     "contact_email": "hash",
@@ -62,146 +57,107 @@ PII_COLUMN_ACTIONS = {
 ANON_FIRST = "Anonymous"
 ANON_LAST = "Customer"
 
+# Global set to track redacted customers (in production, use Redis or database)
+REDACTED_CUSTOMERS = set()
+
 def _hash_value(value: Optional[str], salt: Optional[str] = None) -> str:
+    """Hash a value using SHA256."""
     if not value:
-        value = ""
+        return ""
     m = hashlib.sha256()
     if salt:
         m.update(salt.encode())
     m.update(value.encode())
     return m.hexdigest()
 
-def anonymize_customer(customer_id: int, db_path: Optional[Path] = None, schema: str = SCHEMA, email_salt: Optional[str] = None):
-    db_path = Path(db_path) if db_path else DB_PATH
-    con = duckdb.connect(str(db_path))
+def anonymize_customer_data(customer_data: Dict[str, Any], salt: Optional[str] = None) -> Dict[str, Any]:
+    """Apply anonymization to a customer data dictionary."""
+    anonymized = customer_data.copy()
     
-    # Create redacted customers tracking table
-    con.execute(f"""
-        CREATE TABLE IF NOT EXISTS {schema}.redacted_customers (
-            customer_id BIGINT PRIMARY KEY,
-            redacted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    for field, action in PII_COLUMN_ACTIONS.items():
+        if field in anonymized:
+            if action == "hash":
+                anonymized[field] = _hash_value(anonymized.get(field), salt)
+            elif action == "null":
+                anonymized[field] = None
+            elif action == "anon":
+                if field == "first_name" or field.endswith("_first_name"):
+                    anonymized[field] = ANON_FIRST
+                elif field == "last_name" or field.endswith("_last_name"):
+                    anonymized[field] = ANON_LAST
+                else:
+                    anonymized[field] = "REDACTED"
     
-    # Mark this customer as redacted
-    con.execute(f"""
-        INSERT OR IGNORE INTO {schema}.redacted_customers (customer_id) 
-        VALUES (?)
-    """, (customer_id,))
+    return anonymized
+
+@dlt.resource(name="customers", write_disposition="merge")
+def customers_with_redaction(start_date: TAnyDateTime, redacted_customers: set) -> Iterator[Dict[str, Any]]:
+    """Customer resource that applies redaction to known redacted customers."""
+    customers_resource = shopify_source(start_date=start_date).with_resources("customers")["customers"]
     
-    tables_to_update = {
-        "customers": "id",
-        "customers__addresses": "customer_id",
-        "orders": "customer__id",
-        "orders": "customer__default_address__customer_id"
-    }
+    for customer in customers_resource:
+        customer_id = customer.get("id")
+        if customer_id and customer_id in redacted_customers:
+            yield anonymize_customer_data(customer)
+        else:
+            yield customer
 
-    salt = email_salt
-
-    for table, id_col in tables_to_update.items():
-        # Get columns for this table
-        cols_query = f"PRAGMA table_info('{schema}.{table}')"
-        cols_info = con.execute(cols_query).fetchall()
-        cols = {col[1].lower(): col[1] for col in cols_info}  # map lowercase -> actual column name
-        
-        set_clauses = []
-        values = []
-
-        # For hashing email, fetch current value first
-        email_col = cols.get("email")
-        hashed_email = None
-        if email_col and PII_COLUMN_ACTIONS.get("email") == "hash":
-            row = con.execute(f"SELECT {email_col} FROM {schema}.{table} WHERE {id_col} = ? LIMIT 1", (customer_id,)).fetchone()
-            current_email = row[0] if row else None
-            hashed_email = _hash_value(current_email, salt)
-
-        for pii_col, action in PII_COLUMN_ACTIONS.items():
-            if pii_col in cols:
-                col_name = cols[pii_col]
-                if action == "hash" and pii_col == "email":
-                    set_clauses.append(f"{col_name} = ?")
-                    values.append(hashed_email)
-                elif action == "hash":
-                    # fallback: nullify
-                    set_clauses.append(f"{col_name} = NULL")
-                elif action == "null":
-                    set_clauses.append(f"{col_name} = NULL")
-                elif action == "anon":
-                    if pii_col == "first_name":
-                        set_clauses.append(f"{col_name} = ?")
-                        values.append(ANON_FIRST)
-                    elif pii_col == "last_name":
-                        set_clauses.append(f"{col_name} = ?")
-                        values.append(ANON_LAST)
-                    else:
-                        set_clauses.append(f"{col_name} = ?")
-                        values.append("REDACTED")
-
-        if not set_clauses:
-            continue  # nothing to update in this table
-
-        set_sql = ", ".join(set_clauses)
-        sql = f"UPDATE {schema}.{table} SET {set_sql} WHERE {id_col} = ?"
-        values.append(customer_id)
-
-        try:
-            con.execute(sql, tuple(values))
-            print(f"[✅] Anonymized customer {customer_id} in table '{table}'.")
-        except Exception as e:
-            print(f"[ERROR] Failed to update table '{table}': {e}")
-
-    con.close()
-
-def reapply_redactions(db_path: Optional[Path] = None, schema: str = SCHEMA):
-    """Re-apply anonymization to all previously redacted customers"""
-    db_path = Path(db_path) if db_path else DB_PATH
-    con = duckdb.connect(str(db_path))
+@dlt.resource(name="orders", write_disposition="merge")
+def orders_with_redaction(start_date: TAnyDateTime, redacted_customers: set) -> Iterator[Dict[str, Any]]:
+    """Order resource that applies redaction for orders from redacted customers."""
+    orders_resource = shopify_source(start_date=start_date).with_resources("orders")["orders"]
     
-    # Check if redacted_customers table exists
-    table_exists = con.execute(f"""
-        SELECT COUNT(*) FROM information_schema.tables 
-        WHERE table_schema = '{schema}' AND table_name = 'redacted_customers'
-    """).fetchone()[0]
-    
-    if not table_exists:
-        print("No redacted customers table found - skipping reapplication")
-        con.close()
-        return
-    
-    # Get all redacted customer IDs
-    redacted_customers = con.execute(
-        f"SELECT customer_id FROM {schema}.redacted_customers"
-    ).fetchall()
-    
-    con.close()
-    
-    # Re-apply anonymization to each customer
-    for (customer_id,) in redacted_customers:
-        print(f"Re-applying anonymization to customer {customer_id}")
-        anonymize_customer(customer_id, db_path, schema)
+    for order in orders_resource:
+        customer_id = order.get("customer", {}).get("id") if isinstance(order.get("customer"), dict) else None
+        if customer_id and customer_id in redacted_customers:
+            # Anonymize customer data within the order
+            if "customer" in order and isinstance(order["customer"], dict):
+                order["customer"] = anonymize_customer_data(order["customer"])
+            
+            # Also check for customer data in nested fields
+            for key in list(order.keys()):
+                if key.startswith("customer__") and order[key] is not None:
+                    # Create a mock customer dict for anonymization
+                    mock_customer = {key.replace("customer__", "", 1): order[key]}
+                    anonymized = anonymize_customer_data(mock_customer)
+                    order[key] = anonymized.get(key.replace("customer__", "", 1))
+            
+            yield order
+        else:
+            yield order
+
+def mark_customer_redacted(customer_id: int):
+    """Mark a customer as redacted (in production, persist this to a database)."""
+    REDACTED_CUSTOMERS.add(customer_id)
+    print(f"Marked customer {customer_id} for redaction")
 
 def load_all_resources(resources: List[str], start_date: TAnyDateTime) -> None:
-    """Execute a pipeline that will load the given Shopify resources incrementally beginning at the given start date.
-    Subsequent runs will load only items updated since the previous run.
-    """
-
+    """Execute a pipeline that will load the given Shopify resources with redaction support."""
+    
     pipeline = dlt.pipeline(
         pipeline_name="shopify", destination='postgres', dataset_name="shopify_data"
     )
     
-    # Load data from Shopify
-    load_info = pipeline.run(
-        shopify_source(start_date=start_date).with_resources(*resources),
-    )
+    # Create the source with redaction-aware resources
+    source = shopify_source(start_date=start_date)
     
-    # Re-apply redactions to ensure compliance
-    reapply_redactions()
+    # Replace standard resources with redaction-aware versions if they exist
+    transformed_resources = []
+    for resource_name in resources:
+        if resource_name == "customers":
+            transformed_resources.append(customers_with_redaction(start_date, REDACTED_CUSTOMERS))
+        elif resource_name == "orders":
+            transformed_resources.append(orders_with_redaction(start_date, REDACTED_CUSTOMERS))
+        else:
+            # For other resources (like products), use the standard version
+            transformed_resources.append(source.with_resources(resource_name)[resource_name])
     
+    load_info = pipeline.run(transformed_resources)
     print(load_info)
 
 def incremental_load_with_backloading() -> None:
-    """Load past orders from Shopify in chunks of 1 week each."""
-
+    """Load past orders from Shopify in chunks of 1 week each with redaction support."""
+    
     pipeline = dlt.pipeline(
         pipeline_name="shopify", destination='postgres', dataset_name="shopify_data"
     )
@@ -215,41 +171,37 @@ def incremental_load_with_backloading() -> None:
         ranges.append((current_start_date, end_date))
         current_start_date = end_date
 
-    with pipeline:  # ✅ KEEP CONNECTION OPEN DURING ALL RUNS
-        for start_date, end_date in ranges:
-            print(f"Load orders between {start_date} and {end_date}")
-            data = shopify_source(
-                start_date=start_date, end_date=end_date, created_at_min=min_start_date
-            ).with_resources("orders")
-
-            load_info = pipeline.run(data)
-            print(load_info)
-
-        # Final incremental run starting from now
-        load_info = pipeline.run(
-            shopify_source(
-                start_date=max_end_date, created_at_min=min_start_date
-            ).with_resources("orders")
-        )
-        print(load_info)
+    # Run the pipeline for each time range
+    for start_date, end_date in ranges:
+        print(f"Load orders between {start_date} and {end_date}")
         
-        # Re-apply redactions after all loading is complete
-        reapply_redactions()
+        # Use redaction-aware orders resource
+        data = orders_with_redaction(
+            start_date=start_date, 
+            redacted_customers=REDACTED_CUSTOMERS
+        )
+        
+        load_info = pipeline.run(data)
+        print(load_info)
+
+    # Final incremental run
+    load_info = pipeline.run(
+        orders_with_redaction(
+            start_date=max_end_date, 
+            redacted_customers=REDACTED_CUSTOMERS
+        )
+    )
+    print(load_info)
 
 def load_partner_api_transactions() -> None:
-    """Load transactions from the Shopify Partner API.
-    The partner API uses GraphQL and this example loads all transactions from the beginning paginated.
-
-    The `shopify_partner_query` resource can be used to run custom GraphQL queries to load paginated data.
-    """
-
+    """Load transactions from the Shopify Partner API."""
+    # (Unchanged from your original code)
     pipeline = dlt.pipeline(
         pipeline_name="shopify_partner",
         destination='postgres',
         dataset_name="shopify_partner_data",
     )
 
-    # Construct query to load transactions 100 per page, the `$after` variable is used to paginate
     query = """query Transactions($after: String, first: 100) {
         transactions(after: $after) {
             edges {
@@ -262,34 +214,30 @@ def load_partner_api_transactions() -> None:
     }
     """
 
-    # Configure the resource with the query and json paths to extract the data and pagination cursor
     resource = shopify_partner_query(
         query,
-        # JSON path pointing to the data item in the results
         data_items_path="data.transactions.edges[*].node",
-        # JSON path pointing to the highest page cursor in the results
         pagination_cursor_path="data.transactions.edges[-1].cursor",
-        # The variable name used for pagination
         pagination_variable_name="after",
     )
 
     load_info = pipeline.run(resource)
     print(load_info)
 
-# Add this function for webhook handling
+# Webhook handler function
 def handle_redaction_webhook(customer_id: int):
     """Call this function when you receive a customers/redacted webhook"""
     print(f"Received redaction request for customer {customer_id}")
-    anonymize_customer(customer_id)
-    print(f"Customer {customer_id} has been anonymized")
+    mark_customer_redacted(customer_id)
+    print(f"Customer {customer_id} has been marked for redaction")
 
 if __name__ == "__main__":
     # Add your desired resources to the list...
     resources = ["products", "orders", "customers"]
-    load_all_resources(resources, start_date="2025-07-01")
+    load_all_resources(resources, start_date="2025-01-01")
 
     # incremental_load_with_backloading()
     # load_partner_api_transactions()
     
-    # Example of handling a webhook (you'd call this from your webhook endpoint)
-    # handle_redaction_webhook(123456789)  # Replace with actual customer ID
+    # Example webhook handling
+    # handle_redaction_webhook(123456789)
