@@ -262,7 +262,7 @@ def handle_redaction_webhook(customer_id: int):
 if __name__ == "__main__":
     # Add your desired resources to the list...
     resources = ["products", "orders", "customers"]
-    load_all_resources(resources, start_date="2025-06-06")
+    load_all_resources(resources, start_date="2025-08-08")
 
     # incremental_load_with_backloading()
     # load_partner_api_transactions()
