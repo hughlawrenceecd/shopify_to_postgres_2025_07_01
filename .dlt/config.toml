@@ -6,5 +6,5 @@ log_level="WARNING"  # the system log level of dlt
 dlthub_telemetry = true
 
 [sources.shopify_dlt]
-shop_url = "https://www.ecigarettedirect.co.uk/"
+shop_url = "https://ffg85b-yg.myshopify.com"
 organization_id = "ffg85b-yg"
