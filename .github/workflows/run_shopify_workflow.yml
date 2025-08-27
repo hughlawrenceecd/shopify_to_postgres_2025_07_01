@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  DESTINATION__POSTGRES__CREDENTIALS__DATABASE: ecd_production_shopify
+  DESTINATION__POSTGRES__CREDENTIALS__DATABASE: ecd_production_shopify_2025_07_01
   DESTINATION__POSTGRES__CREDENTIALS__USERNAME: doadmin
   DESTINATION__POSTGRES__CREDENTIALS__HOST: ecd-data-warehouse-do-user-23910252-0.h.db.ondigitalocean.com
   DESTINATION__POSTGRES__CREDENTIALS__PORT: "25060"
