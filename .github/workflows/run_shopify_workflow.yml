@@ -31,7 +31,7 @@ jobs:
           python3 -m venv venv
           source venv/bin/activate
           pip install --upgrade pip
-          pip install -r requirements_github_action.txt
+          pip install -r requirements.txt
 
       - name: Run DLT pipeline
         run: |
