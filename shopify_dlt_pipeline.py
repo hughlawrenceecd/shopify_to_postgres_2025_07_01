@@ -18,7 +18,21 @@ def load_all_resources(resources: List[str], start_date: TAnyDateTime) -> None:
     pipeline = dlt.pipeline(
         pipeline_name="shopify", destination='postgres', dataset_name="shopify_data"
     )
-    
+
+    try:
+        print("🔌 Initializing pipeline...")
+        source = shopify_source(start_date=start_date).with_resources(*resources)
+        print("⚙️ Source configured, running pipeline...")
+
+        load_info = pipeline.run(source)
+
+        print("✅ Pipeline run complete.")
+        print("📊 Load info summary:")
+        print(load_info)  # already has inserted/failed row counts
+    except Exception as e:
+        print(f"❌ Pipeline failed with error: {e}", flush=True)
+        raise
+
     load_info = pipeline.run(
         shopify_source(start_date=start_date).with_resources(*resources),
     )
@@ -113,7 +127,7 @@ def load_partner_api_transactions() -> None:
 if __name__ == "__main__":
     # Add your desired resources to the list...
     resources = ["products", "orders", "customers"]
-    load_all_resources(resources, start_date="2025-06-01")
+    load_all_resources(resources, start_date="2025-07-01")
 
     # incremental_load_with_backloading()
 
