@@ -41,7 +41,7 @@ def incremental_load_with_backloading() -> None:
         pipeline_name="shopify", destination="postgres", dataset_name="shopify_data"
     )
 
-    min_start_date = current_start_date = pendulum.datetime(2025, 7, 1)
+    min_start_date = current_start_date = pendulum.datetime(2025, 2, 1)
     max_end_date = pendulum.now()
 
     ranges: List[Tuple[pendulum.DateTime, pendulum.DateTime]] = []
