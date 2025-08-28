@@ -50,7 +50,7 @@ def incremental_load_with_backloading() -> None:
     )
 
     # Load all orders from 2023-01-01 to now
-    min_start_date = current_start_date = pendulum.datetime(2024, 1, 1)
+    min_start_date = current_start_date = pendulum.datetime(2025, 7, 1)
     max_end_date = pendulum.now()
 
     # Create a list of time ranges of 1 week each, we'll use this to load the data in chunks
@@ -126,9 +126,9 @@ def load_partner_api_transactions() -> None:
 
 if __name__ == "__main__":
     # Add your desired resources to the list...
-    resources = ["products", "orders", "customers"]
-    load_all_resources(resources, start_date="2025-07-01")
+    # resources = ["products", "orders", "customers"]
+    # load_all_resources(resources, start_date="2025-07-01")
 
-    # incremental_load_with_backloading()
+    incremental_load_with_backloading()
 
     # load_partner_api_transactions()
