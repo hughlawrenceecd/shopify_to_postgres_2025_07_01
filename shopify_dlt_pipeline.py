@@ -16,7 +16,7 @@ def load_all_resources(resources: List[str], start_date: TAnyDateTime) -> None:
     print(f"⏳ Start date: {start_date}")
 
     pipeline = dlt.pipeline(
-        pipeline_name="shopify", destination='postgres', dataset_name="shopify_data"
+        pipeline_name="shopify_july", destination='postgres', dataset_name="shopify_data"
     )
 
     try:
