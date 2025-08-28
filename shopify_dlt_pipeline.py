@@ -1,86 +1,77 @@
-"""Pipeline to load Shopify data into DuckDB.
-"""
-
+import logging
 import dlt
 from dlt.common import pendulum
 from typing import List, Tuple
 from shopify_dlt import shopify_source, TAnyDateTime, shopify_partner_query
 
+# ---- Setup logging ----
+logging.basicConfig(
+    level=logging.INFO,  # Change to DEBUG for very verbose
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True  # overwrite default config if DLT sets one
+)
+logger = logging.getLogger(__name__)
+
 
 def load_all_resources(resources: List[str], start_date: TAnyDateTime) -> None:
-    """Execute a pipeline that will load the given Shopify resources incrementally beginning at the given start date.
-    Subsequent runs will load only items updated since the previous run.
-    """
-
-    print(f"📦 Resources: {resources}")
-    print(f"⏳ Start date: {start_date}")
+    logger.info(f"📦 Resources: {resources}")
+    logger.info(f"⏳ Start date: {start_date}")
 
     pipeline = dlt.pipeline(
-        pipeline_name="shopify_july", destination='postgres', dataset_name="shopify_data"
+        pipeline_name="shopify_july", destination="postgres", dataset_name="shopify_data"
     )
 
     try:
-        print("🔌 Initializing pipeline...")
+        logger.info("🔌 Initializing pipeline...")
         source = shopify_source(start_date=start_date).with_resources(*resources)
-        print("⚙️ Source configured, running pipeline...")
+        logger.info("⚙️ Source configured, running pipeline...")
 
         load_info = pipeline.run(source)
 
-        print("✅ Pipeline run complete.")
-        print("📊 Load info summary:")
-        print(load_info)  # already has inserted/failed row counts
+        logger.info("✅ Pipeline run complete.")
+        logger.info(f"📊 Load info summary:\n{load_info}")
     except Exception as e:
-        print(f"❌ Pipeline failed with error: {e}", flush=True)
+        logger.exception("❌ Pipeline failed with error")
         raise
-
-    load_info = pipeline.run(
-        shopify_source(start_date=start_date).with_resources(*resources),
-    )
-    print(load_info)
 
 
 def incremental_load_with_backloading() -> None:
-    """Load past orders from Shopify in chunks of 1 week each using the start_date and end_date parameters.
-    This can useful to reduce the potiential failure window when loading large amounts of historic data.
-    Chunks and incremental load can also be run in parallel to speed up the initial load.
-    """
-
     pipeline = dlt.pipeline(
-        pipeline_name="shopify", destination='postgres', dataset_name="shopify_data"
+        pipeline_name="shopify", destination="postgres", dataset_name="shopify_data"
     )
 
-    # Load all orders from 2023-01-01 to now
     min_start_date = current_start_date = pendulum.datetime(2025, 7, 1)
     max_end_date = pendulum.now()
 
-    # Create a list of time ranges of 1 week each, we'll use this to load the data in chunks
     ranges: List[Tuple[pendulum.DateTime, pendulum.DateTime]] = []
     while current_start_date < max_end_date:
         end_date = min(current_start_date.add(weeks=1), max_end_date)
         ranges.append((current_start_date, end_date))
         current_start_date = end_date
 
-    # Run the pipeline for each time range created above
-    for start_date, end_date in ranges:
-        print(f"Load orders between {start_date} and {end_date}")
-        # Create the source with start and end date set according to the current time range to filter
-        # created_at_min lets us set a cutoff to exclude orders created before the initial date of (2023-01-01)
-        # even if they were updated after that date
+    logger.info(f"🔄 Starting backfill with {len(ranges)} weekly chunks")
+
+    for idx, (start_date, end_date) in enumerate(ranges, start=1):
+        logger.info(f"▶️ Chunk {idx}/{len(ranges)}: {start_date} → {end_date}")
         data = shopify_source(
             start_date=start_date, end_date=end_date, created_at_min=min_start_date
         ).with_resources("orders")
 
-        load_info = pipeline.run(data)
-        print(load_info)
+        try:
+            load_info = pipeline.run(data)
+            logger.info(f"✅ Chunk {idx} completed: {load_info}")
+        except Exception as e:
+            logger.exception(f"❌ Failed on chunk {idx} ({start_date} → {end_date})")
+            break
 
-    # Continue loading new data incrementally starting at the end of the last range
-    # created_at_min still filters out items created before 2023-01-01
+    logger.info("🔄 Switching to incremental load from latest backfill point...")
     load_info = pipeline.run(
         shopify_source(
             start_date=max_end_date, created_at_min=min_start_date
         ).with_resources("orders")
     )
-    print(load_info)
+    logger.info(f"✅ Incremental load complete: {load_info}")
 
 
 def load_partner_api_transactions() -> None:
