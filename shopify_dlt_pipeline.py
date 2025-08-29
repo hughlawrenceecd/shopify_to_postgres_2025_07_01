@@ -4,12 +4,12 @@ from dlt.common import pendulum
 from typing import List, Tuple
 from shopify_dlt import shopify_source, TAnyDateTime, shopify_partner_query
 
-# ---- Setup logging ----
+
 logging.basicConfig(
-    level=logging.INFO,  # Change to DEBUG for very verbose
+    level=logging.INFO, 
     format="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    force=True  # overwrite default config if DLT sets one
+    force=True
 )
 logger = logging.getLogger(__name__)
 
@@ -50,10 +50,10 @@ def incremental_load_with_backloading() -> None:
         ranges.append((current_start_date, end_date))
         current_start_date = end_date
 
-    logger.info(f"🔄 Starting backfill with {len(ranges)} weekly chunks")
+    logger.info(f"Starting backfill with {len(ranges)} weekly chunks")
 
     for idx, (start_date, end_date) in enumerate(ranges, start=1):
-        logger.info(f"▶️ Chunk {idx}/{len(ranges)}: {start_date} → {end_date}")
+        logger.info(f"Chunk {idx}/{len(ranges)}: {start_date} → {end_date}")
         data = shopify_source(
             start_date=start_date, end_date=end_date, created_at_min=min_start_date
         ).with_resources("orders")
@@ -117,9 +117,9 @@ def load_partner_api_transactions() -> None:
 
 if __name__ == "__main__":
     # Add your desired resources to the list...
-    # resources = ["products", "orders", "customers"]
-    # load_all_resources(resources, start_date="2025-07-01")
+    resources = ["products", "orders", "customers"]
+    load_all_resources(resources, start_date="2025-08-27")
 
-    incremental_load_with_backloading()
+    # incremental_load_with_backloading()
 
     # load_partner_api_transactions()
