@@ -120,6 +120,7 @@ if __name__ == "__main__":
     resources = ["products", "orders", "customers"]
     load_all_resources(resources, start_date="2025-08-27")
 
+
     # incremental_load_with_backloading()
 
     # load_partner_api_transactions()
