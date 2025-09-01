@@ -41,7 +41,7 @@ def incremental_load_with_backloading() -> None:
         pipeline_name="shopify", destination="postgres", dataset_name="shopify_data"
     )
 
-    min_start_date = current_start_date = pendulum.datetime(2025, 2, 1)
+    min_start_date = current_start_date = pendulum.datetime(2024, 9, 1)
     max_end_date = pendulum.now()
 
     ranges: List[Tuple[pendulum.DateTime, pendulum.DateTime]] = []
@@ -117,9 +117,9 @@ def load_partner_api_transactions() -> None:
 
 if __name__ == "__main__":
     # Add your desired resources to the list...
-    resources = ["products", "orders", "customers"]
-    load_all_resources(resources, start_date="2025-08-27")
+    #resources = ["products", "orders", "customers"]
+    #load_all_resources(resources, start_date="2025-08-27")
 
-    # incremental_load_with_backloading()
+    incremental_load_with_backloading()
 
     # load_partner_api_transactions()
